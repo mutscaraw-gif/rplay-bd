@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1773379419592,
+      "tag": "0000_bitter_wong",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1773380233900,
+      "tag": "0001_brainy_zuras",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1773383686630,
+      "tag": "0002_smart_cable",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1773483556764,
+      "tag": "0003_flimsy_jack_flag",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1774920532529,
+      "tag": "0004_workable_sleeper",
+      "breakpoints": true
+    }
+  ]
+}
