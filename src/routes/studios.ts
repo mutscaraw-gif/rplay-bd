@@ -5,33 +5,43 @@ import { eq, and, sql } from "drizzle-orm";
 
 export const studiosRoutes = new Elysia({ prefix: '/studios' })
   
-  // 1. GET ALL STUDIOS
+  /**
+   * 1. GET ALL STUDIOS
+   */
   .get("/", async () => {
     return await db.query.studios.findMany({
-      with: { cinema: true } // Mengambil data bioskop terkait jika ada relasi
+      with: { cinema: true }
     });
   })
 
-  // 2. GET STUDIO BY ID
+  /**
+   * 2. GET STUDIO BY ID
+   */
   .get("/:id", async ({ params: { id }, set }) => {
     const result = await db.query.studios.findFirst({
-      where: eq(studios.studioId, parseInt(id)),
+      where: eq(studios.studioId, Number(id)),
       with: { cinema: true }
     });
+
     if (!result) {
       set.status = 404;
       return { error: "Studio tidak ditemukan" };
     }
     return result;
+  }, {
+    params: t.Object({ id: t.Numeric() })
   })
 
-  // 3. CREATE NEW STUDIO
+  /**
+   * 3. CREATE NEW STUDIO
+   * Sinkron dengan kolom 'type' di database
+   */
   .post("/", async ({ body, set }) => {
     try {
       const [newStudio] = await db.insert(studios).values({
         cinemaId: body.cinema_id,
         namaStudio: body.nama_studio,
-        tipeStudio: body.tipe_studio, // E.g., 'IMAX', 'PREMIERE', 'REGULAR'
+        type: body.type, 
       }).returning();
       
       set.status = 201;
@@ -44,20 +54,22 @@ export const studiosRoutes = new Elysia({ prefix: '/studios' })
     body: t.Object({
       cinema_id: t.Number(),
       nama_studio: t.String(),
-      tipe_studio: t.String()
+      type: t.String({ description: "Contoh: 2D, IMAX, Premiere" }) 
     })
   })
 
-  // 4. UPDATE STUDIO
+  /**
+   * 4. UPDATE STUDIO
+   */
   .put("/:id", async ({ params: { id }, body, set }) => {
     try {
       const [updated] = await db.update(studios)
         .set({
           cinemaId: body.cinema_id,
           namaStudio: body.nama_studio,
-          tipeStudio: body.tipe_studio
+          type: body.type
         })
-        .where(eq(studios.studioId, parseInt(id)))
+        .where(eq(studios.studioId, Number(id)))
         .returning();
 
       if (!updated) {
@@ -70,19 +82,21 @@ export const studiosRoutes = new Elysia({ prefix: '/studios' })
       return { error: "Gagal update studio", details: error.message };
     }
   }, {
-    params: t.Object({ id: t.String() }),
+    params: t.Object({ id: t.Numeric() }),
     body: t.Object({
       cinema_id: t.Number(),
       nama_studio: t.String(),
-      tipe_studio: t.String()
+      type: t.String()
     })
   })
 
-  // 5. DELETE STUDIO
+  /**
+   * 5. DELETE STUDIO
+   */
   .delete("/:id", async ({ params: { id }, set }) => {
     try {
       const [deleted] = await db.delete(studios)
-        .where(eq(studios.studioId, parseInt(id)))
+        .where(eq(studios.studioId, Number(id)))
         .returning();
 
       if (!deleted) {
@@ -94,9 +108,13 @@ export const studiosRoutes = new Elysia({ prefix: '/studios' })
       set.status = 500;
       return { error: "Gagal menghapus studio", details: error.message };
     }
+  }, {
+    params: t.Object({ id: t.Numeric() })
   })
 
-  // 6. SEATS GENERATOR (Logika Anda sebelumnya)
+  /**
+   * 6. SEATS GENERATOR
+   */
   .post("/seats/generate", async ({ body, set }) => {
     try {
       const { studio_id, row_count, seats_per_row } = body;
@@ -117,7 +135,10 @@ export const studiosRoutes = new Elysia({ prefix: '/studios' })
       }
 
       const result = await db.insert(seats).values(insertData).returning();
-      return { success: true, message: `Sukses! ${result.length} kursi dibuat.` };
+      return { 
+        success: true, 
+        message: `Berhasil membuat ${result.length} kursi untuk Studio ID ${studio_id}.` 
+      };
     } catch (error: any) {
       set.status = 500;
       return { error: "Gagal generate kursi.", details: error.message };
@@ -130,10 +151,12 @@ export const studiosRoutes = new Elysia({ prefix: '/studios' })
     })
   })
 
-  // 7. SEATS STATUS (Logika Anda sebelumnya yang sudah diperbaiki)
+  /**
+   * 7. SEATS STATUS
+   */
   .get("/seats/status/:schedule_id", async ({ params: { schedule_id }, set }) => {
     try {
-      const targetId = parseInt(schedule_id);
+      const targetId = Number(schedule_id);
 
       const scheduleData = await db.query.schedules.findFirst({ 
         where: eq(schedules.scheduleId, targetId) 
@@ -182,10 +205,9 @@ export const studiosRoutes = new Elysia({ prefix: '/studios' })
       };
 
     } catch (error: any) {
-      console.error("Error seat status:", error);
       set.status = 500;
-      return { error: "Internal Server Error", details: error.message };
+      return { error: "Gagal memuat status kursi", details: error.message };
     }
   }, {
-    params: t.Object({ schedule_id: t.String() })
+    params: t.Object({ schedule_id: t.Numeric() })
   });
