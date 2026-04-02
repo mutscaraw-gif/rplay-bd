@@ -3,7 +3,7 @@ import { swagger } from "@elysiajs/swagger";
 import { cors } from "@elysiajs/cors";
 import { jwt } from "@elysiajs/jwt";
 
-// Import rute
+// --- IMPORT SEMUA RUTE ---
 import { adminRoutes } from "./routes/admin";
 import { userRoutes } from "./routes/user";
 import { movieRoutes } from "./routes/movies";
@@ -19,32 +19,53 @@ import { seatRoutes } from "./routes/seats";
 import { ticketRoutes } from "./routes/tickets";
 
 const app = new Elysia()
-  // PERBAIKAN CORS: Tambahkan konfigurasi spesifik
+  // 1. KONFIGURASI CORS (Penting untuk koneksi ke Frontend)
   .use(cors({
-    origin: true, // Mengizinkan asal request dari mana saja (origin frontend kamu)
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'], // Izinkan semua method
-    allowedHeaders: ['Content-Type', 'Authorization'], // Izinkan header penting
+    origin: true, 
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
     preflight: true
   }))
+
+  // 2. KONFIGURASI JWT (Global)
   .use(
     jwt({
       name: "jwt",
       secret: process.env.JWT_SECRET || "development_secret_key", 
     })
   )
+
+  // 3. KONFIGURASI SWAGGER (Dengan Security Definition)
   .use(swagger({ 
-    path: '/docs',
+    path: '/docs', // Akses dokumentasi di localhost:3001/docs
     documentation: {
       info: {
-        title: 'RPlay Cinema API',
-        version: '1.0.0'
+        title: 'RPlay Cinema API Documentation',
+        version: '1.0.0',
+        description: 'Dokumentasi API untuk Sistem Bioskop RPlay'
+      },
+      tags: [
+        { name: 'Admin Auth', description: 'Autentikasi Admin' },
+        { name: 'Admin Ticket System', description: 'Sistem Verifikasi QR Code' },
+        { name: 'Movies', description: 'Manajemen Data Film' }
+      ],
+      components: {
+        securitySchemes: {
+          bearerAuth: {
+            type: 'http',
+            scheme: 'bearer',
+            bearerFormat: 'JWT'
+          }
+        }
       }
     }
   }))
+
+  // 4. PENGELOMPOKAN RUTE API
   .group("/api", (app) => 
     app
       .use(adminRoutes)
-      .use(userRoutes)   // <--- Jangan lupa ini juga
+      .use(userRoutes)
       .use(movieRoutes)
       .use(actorsRoutes)
       .use(castsRoutes)
@@ -52,13 +73,19 @@ const app = new Elysia()
       .use(cinemasRoutes)
       .use(studiosRoutes)
       .use(scheduleRoutes)
-      .use(seatRoutes)    // <--- INI YANG KURANG
-    .use(orderRoutes)   // <--- Jangan lupa ini juga
-    .use(paymentRoutes) // <--- Dan ini
-    .use(ticketRoutes)
+      .use(seatRoutes)
+      .use(orderRoutes)
+      .use(paymentRoutes)
+      .use(ticketRoutes)
   )
+
+  // 5. JALANKAN SERVER
   .listen(process.env.PORT || 3001);
 
 export type App = typeof app;
 
-console.log(`🚀 RPlay API running on port ${app.server?.port}`);
+console.log(`
+  🚀 RPlay API is running!
+  📡 URL: http://${app.server?.hostname}:${app.server?.port}
+  📖 Docs: http://${app.server?.hostname}:${app.server?.port}/docs
+`);

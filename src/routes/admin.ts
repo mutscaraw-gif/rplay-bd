@@ -37,7 +37,8 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       email: t.String({ format: 'email' }),
       password: t.String(),
       photo_url: t.Optional(t.String())
-    })
+    }),
+    detail: { tags: ['Admin Auth'], summary: 'Daftar akun admin baru' }
   })
 
   /**
@@ -69,7 +70,8 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       data: safeAdmin 
     };
   }, {
-    body: t.Object({ email: t.String(), password: t.String() })
+    body: t.Object({ email: t.String(), password: t.String() }),
+    detail: { tags: ['Admin Auth'], summary: 'Login untuk mendapatkan token' }
   })
 
   /**
@@ -86,8 +88,13 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     }
     
     const allAdmins = await db.select().from(admins);
-    // Menghilangkan password dari list demi keamanan
     return allAdmins.map(({ password, ...rest }) => rest);
+  }, {
+    detail: { 
+      tags: ['Admin Management'], 
+      summary: 'Ambil semua data admin',
+      security: [{ bearerAuth: [] }] 
+    }
   })
 
   /**
@@ -95,7 +102,6 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
    */
   .post("/scan-ticket", async ({ body, set, jwt, headers }) => {
     try {
-      // Validasi Token Admin
       const token = headers.authorization?.startsWith('Bearer ') 
         ? headers.authorization.slice(7) 
         : null;
@@ -107,7 +113,6 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
       const qrContent = body.qr_content; 
 
-      // 1. Cari record payment
       const paymentRecord = await db.query.payments.findFirst({
         where: eq(payments.externalId, qrContent),
       });
@@ -117,7 +122,6 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
         return { status: "REJECTED", message: "Tiket/Invoice tidak ditemukan!" };
       }
 
-      // 2. Ambil data booking lengkap
       const ticket = await db.query.bookings.findFirst({
         where: eq(bookings.bookingId, paymentRecord.bookingId),
         with: {
@@ -136,13 +140,11 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
         return { status: "REJECTED", message: "Data booking tidak ditemukan!" };
       }
 
-      // 3. Validasi Status SUCCESS
       if (ticket.statusBooking !== "SUCCESS") {
         set.status = 403;
         return { status: "REJECTED", message: "Tiket ini belum lunas!" };
       }
 
-      // 4. Validasi Double Scan
       if (ticket.isUsed) {
         set.status = 400;
         return { 
@@ -152,7 +154,6 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
         };
       }
 
-      // 5. Update status dan waktu scan
       await db.update(bookings)
         .set({ 
           isUsed: true,
@@ -165,7 +166,7 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
         message: "Verifikasi Berhasil! Selamat menonton.",
         data: {
           movie: ticket.schedule?.movie?.title,
-          cinema: (ticket.schedule?.studio as any)?.cinema?.namaBioskop || "Bioskop RPlay",
+          cinema: (ticket.schedule?.studio as any)?.cinema?.namaBioskop,
           studio: (ticket.schedule?.studio as any)?.namaStudio,
           seats: ticket.details.map((d: any) => d.seat?.seatNumber).filter(Boolean),
           booking_id: ticket.bookingId,
@@ -174,12 +175,16 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       };
 
     } catch (err: any) {
-      console.error("Scan Error:", err.message);
       set.status = 500;
       return { status: "ERROR", error: "Terjadi gangguan pada server verifikasi" };
     }
   }, {
     body: t.Object({
-      qr_content: t.String()
-    })
+      qr_content: t.String({ description: "Isi dari QR Code (external_id)" })
+    }),
+    detail: { 
+      tags: ['Admin Ticket System'], 
+      summary: 'Verifikasi tiket penonton',
+      security: [{ bearerAuth: [] }] 
+    }
   });
