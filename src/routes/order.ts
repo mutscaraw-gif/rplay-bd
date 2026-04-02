@@ -142,7 +142,7 @@ export const orderRoutes = new Elysia({ prefix: '/order' })
 
         return newBooking.id;
       });
-//update ni
+
       set.status = 201;
       return { 
         message: "Checkout Berhasil", 

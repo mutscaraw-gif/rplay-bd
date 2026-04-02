@@ -1,7 +1,7 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
-import { bookings, payments } from "../db/schema";
-import { eq, sql } from "drizzle-orm";
+import { bookings, payments, schedules } from "../db/schema";
+import { eq, sql, and } from "drizzle-orm";
 import { Xendit } from 'xendit-node';
 
 const xenditClient = new Xendit({ 
@@ -15,7 +15,6 @@ export const paymentRoutes = new Elysia({ prefix: '/payment' })
    */
   .post("/create-invoice", async ({ body, set }) => {
     try {
-      // Menggunakan timestamp agar ID unik
       const externalId = `INV-RPLAY-${body.bookingId}-${Date.now()}`;
 
       const xenditInvoice = await xenditClient.Invoice.createInvoice({
@@ -24,10 +23,9 @@ export const paymentRoutes = new Elysia({ prefix: '/payment' })
           amount: body.amount,
           payerEmail: body.email,
           description: `Tiket Cinema RPlay - Booking #${body.bookingId}`,
-          // Pastikan redirect URL mengarah ke frontend kamu nantinya
-          successRedirectUrl: `http://localhost:3000/order/summary/${body.bookingId}`,
-          failureRedirectUrl: `http://localhost:3000/order/summary/${body.bookingId}`,
-          invoiceDuration: 900, // 15 menit
+          successRedirectUrl: `${process.env.FRONTEND_URL}/order/summary/${body.bookingId}`,
+          failureRedirectUrl: `${process.env.FRONTEND_URL}/order/summary/${body.bookingId}`,
+          invoiceDuration: 900, 
         }
       });
 
@@ -38,7 +36,6 @@ export const paymentRoutes = new Elysia({ prefix: '/payment' })
         checkoutUrl: xenditInvoice.invoiceUrl,
         paymentMethod: "XENDIT_GATEWAY",
         paymentStatus: "PENDING",
-        updatedAt: sql`datetime('now')` 
       });
 
       return { 
@@ -47,7 +44,6 @@ export const paymentRoutes = new Elysia({ prefix: '/payment' })
         external_id: externalId 
       };
     } catch (err: any) {
-      console.error("Xendit Error:", err);
       set.status = 500;
       return { error: "Gagal membuat invoice", detail: err.message };
     }
@@ -61,92 +57,164 @@ export const paymentRoutes = new Elysia({ prefix: '/payment' })
 
   /**
    * 2. CALLBACK (WEBHOOK)
-   * Diperbaiki untuk menangani simulasi manual dan webhook asli Xendit
    */
   .post("/callback", async ({ body, headers, set }) => {
     try {
       const callbackToken = headers['x-callback-token'];
-      
-      // Keamanan: Validasi token dari Xendit
       if (!callbackToken || callbackToken !== process.env.XENDIT_CALLBACK_TOKEN) {
         set.status = 403;
-        return { error: "Forbidden: Invalid Callback Token" };
+        return { error: "Forbidden" };
       }
 
       const payload = body as any;
 
-      // Logika untuk status PAID atau SETTLED
-      if (payload.status === "PAID" || payload.status === "SETTLED") {
-        const result = await db.transaction(async (tx) => {
-          // 1. Update Tabel Payments
-          const [updatedPayment] = await tx.update(payments)
-            .set({ 
-              paymentStatus: "PAID",
-              paymentMethod: payload.payment_method || "QRIS", // Default ke QRIS jika simulasi
-              updatedAt: sql`datetime('now')`
-            })
-            .where(eq(payments.externalId, payload.external_id))
-            .returning();
-
-          if (!updatedPayment) {
-            throw new Error("Payment record not found for external_id: " + payload.external_id);
-          }
-
-          // 2. Update Tabel Bookings (Status jadi SUCCESS)
-          await tx.update(bookings)
-            .set({ statusBooking: "SUCCESS" })
-            .where(eq(bookings.bookingId, updatedPayment.bookingId));
-          
-          return { status: "success", bookingId: updatedPayment.bookingId };
+      return await db.transaction(async (tx) => {
+        const payRecord = await tx.query.payments.findFirst({
+          where: eq(payments.externalId, payload.external_id)
         });
 
-        return result;
-      }
+        if (!payRecord) return { status: "error" };
 
-      // Logika untuk status EXPIRED
-      if (payload.status === "EXPIRED") {
-        await db.update(payments)
-          .set({ 
-            paymentStatus: "EXPIRED",
-            updatedAt: sql`datetime('now')` 
-          })
-          .where(eq(payments.externalId, payload.external_id));
-        
-        return { status: "expired_recorded" };
-      }
+        if (payload.status === "PAID" || payload.status === "SETTLED") {
+          if (payRecord.paymentStatus === "PAID") return { status: "already_processed" };
 
-      return { status: "ignored", message: "Status not handled" };
+          await tx.update(payments)
+            .set({ 
+              paymentStatus: "PAID",
+              paymentMethod: payload.payment_method || "UNKNOWN",
+              updatedAt: sql`(datetime('now', 'localtime'))`
+            })
+            .where(eq(payments.externalId, payload.external_id));
+
+          await tx.update(bookings)
+            .set({ statusBooking: "SUCCESS" })
+            .where(eq(bookings.bookingId, payRecord.bookingId));
+          
+          return { status: "success" };
+        }
+
+        if (payload.status === "EXPIRED") {
+          if (payRecord.paymentStatus !== "PENDING") return { status: "already_finalized" };
+
+          await tx.update(payments)
+            .set({ paymentStatus: "EXPIRED", updatedAt: sql`(datetime('now', 'localtime'))` })
+            .where(eq(payments.externalId, payload.external_id));
+
+          const bookingData = await tx.query.bookings.findFirst({
+              where: eq(bookings.bookingId, payRecord.bookingId)
+          });
+
+          if (bookingData && bookingData.statusBooking === "PENDING") {
+              await tx.update(bookings).set({ statusBooking: "CANCELLED" }).where(eq(bookings.bookingId, payRecord.bookingId));
+              await tx.update(schedules)
+                  .set({ availableSeats: sql`available_seats + ${bookingData.quantity}` })
+                  .where(eq(schedules.scheduleId, bookingData.scheduleId));
+          }
+          return { status: "expired_restored" };
+        }
+      });
     } catch (err: any) {
-      // PENTING: Lihat console terminal untuk tahu kenapa error
-      console.error("WEBHOOK ERROR LOG:", err.message);
-      set.status = 400;
-      return { error: "Webhook Processing Failed", detail: err.message };
+      set.status = 500;
+      return { error: "Webhook Failed" };
     }
   }, { body: t.Any() })
 
   /**
-   * 3. GET STATUS
+   * 3. GET PAYMENT SUMMARY (Fix Error 422)
    */
-  .get("/status/:bookingId", async ({ params: { bookingId }, set }) => {
+  .get("/summary/:bookingId", async ({ params: { bookingId }, query, set }) => {
     try {
-      const payment = await db.query.payments.findFirst({
-        where: eq(payments.bookingId, bookingId),
-      });
+      // Manual Conversion untuk menghindari 422
+      const bId = parseInt(bookingId);
+      const uId = query.userId ? parseInt(query.userId) : null;
 
-      if (!payment) {
-        set.status = 404;
-        return { error: "Payment not found for this booking" };
+      if (!uId) {
+        set.status = 400;
+        return { error: "User ID wajib disertakan dalam query (?userId=...)" };
       }
 
+      const result = await db.query.bookings.findFirst({
+        where: and(
+          eq(bookings.bookingId, bId),
+          eq(bookings.userId, uId)
+        ),
+        with: {
+          schedule: {
+            with: {
+              movie: true,
+              studio: { with: { cinema: true } }
+            }
+          },
+          details: { with: { seat: true } },
+          payments: {
+            orderBy: (payments, { desc }) => [desc(payments.createdAt)],
+            limit: 1
+          }
+        }
+      });
+
+      if (!result) {
+        set.status = 404;
+        return { error: "Data booking tidak ditemukan atau bukan milik user ini" };
+      }
+
+      const adminFee = 2000;
+
       return {
-        booking_id: payment.bookingId,
-        status: payment.paymentStatus,
-        payment_method: payment.paymentMethod,
-        external_id: payment.externalId,
-        updated_at: payment.updatedAt
+        booking_id: result.bookingId,
+        movie: {
+          title: result.schedule?.movie?.title,
+          poster: result.schedule?.movie?.photoUrl,
+          studio: result.schedule?.studio?.namaStudio,
+          cinema: result.schedule?.studio?.cinema?.namaBioskop,
+        },
+        order_details: {
+          seats: result.details?.map(d => d.seat?.seatNumber).filter(Boolean),
+          quantity: result.quantity,
+          subtotal: result.totalPrice,
+          total_price: result.totalPrice + adminFee,
+        },
+        payment: {
+          status: result.payments[0]?.paymentStatus || "NOT_CREATED",
+          checkout_url: result.payments[0]?.checkoutUrl,
+          expiry_label: "15 Menit"
+        }
       };
     } catch (err: any) {
+      console.error("Summary Error:", err);
       set.status = 500;
       return { error: "Internal Server Error" };
     }
-  }, { params: t.Object({ bookingId: t.Numeric() }) });
+  }, {
+    // Menggunakan t.String agar input URL tidak langsung ditolak jika formatnya string
+    params: t.Object({ bookingId: t.String() }),
+    query: t.Object({ userId: t.Optional(t.String()) })
+  })
+
+  /**
+   * 4. GET STATUS (Fix Error 422)
+   */
+  .get("/status/:bookingId", async ({ params: { bookingId }, set }) => {
+    try {
+      const bId = parseInt(bookingId);
+      const payment = await db.query.payments.findFirst({
+        where: eq(payments.bookingId, bId),
+        orderBy: (payments, { desc }) => [desc(payments.createdAt)]
+      });
+      
+      if (!payment) {
+        set.status = 404;
+        return { error: "Payment Not Found" };
+      }
+
+      return { 
+        status: payment.paymentStatus, 
+        external_id: payment.externalId 
+      };
+    } catch (err: any) {
+      set.status = 500;
+      return { error: "Server Error" };
+    }
+  }, { 
+    params: t.Object({ bookingId: t.String() }) 
+  });

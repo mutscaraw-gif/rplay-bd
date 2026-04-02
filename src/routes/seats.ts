@@ -1,19 +1,22 @@
-// routes/seats.ts
 import { Elysia, t } from "elysia";
 import { db } from "../db";
 import { seats, bookingDetails, bookings, schedules } from "../db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, ne } from "drizzle-orm";
 
 export const seatRoutes = new Elysia({ prefix: '/seats' })
   
-  // Endpoint CRITICAL: Cek kursi mana yang sudah dipesan untuk jadwal tertentu
+  /**
+   * GET STATUS KURSI
+   * Mengambil semua denah kursi di studio terkait dan mengecek mana yang sudah terisi.
+   */
   .get("/status/:schedule_id", async ({ params: { schedule_id }, set }) => {
     try {
       const sId = parseInt(schedule_id);
 
-      // 1. Ambil data jadwal untuk tahu studio mana
+      // 1. Validasi Jadwal & Dapatkan Studio ID
       const schedule = await db.query.schedules.findFirst({
-        where: eq(schedules.scheduleId, sId)
+        where: eq(schedules.scheduleId, sId),
+        columns: { studioId: true }
       });
 
       if (!schedule) {
@@ -21,32 +24,49 @@ export const seatRoutes = new Elysia({ prefix: '/seats' })
         return { error: "Jadwal tidak ditemukan" };
       }
 
-      // 2. Ambil SEMUA kursi di studio tersebut
+      // 2. Ambil Semua Kursi yang ada di Studio tersebut
       const allSeats = await db.query.seats.findMany({
-        where: eq(seats.studioId, schedule.studioId)
+        where: eq(seats.studioId, schedule.studioId),
+        orderBy: [seats.rowName, seats.seatNumber] // Urutkan agar rapi di frontend
       });
 
-      // 3. Ambil ID kursi yang sudah di-BOOKED untuk jadwal ini
-      const booked = await db.select({ seatId: bookingDetails.seatId })
+      // 3. Ambil Kursi yang SUDAH TERISI (Booked)
+      // Logika: Kursi dianggap terisi jika statusnya BUKAN 'CANCELLED'
+      // Ini mencakup status 'SUCCESS' dan 'PENDING'
+      const reservedSeats = await db
+        .select({ seatId: bookingDetails.seatId })
         .from(bookingDetails)
         .innerJoin(bookings, eq(bookingDetails.bookingId, bookings.bookingId))
         .where(
           and(
             eq(bookings.scheduleId, sId),
-            eq(bookings.statusBooking, "SUCCESS") // Hanya yang sudah bayar/sukses
+            ne(bookings.statusBooking, "CANCELLED") 
           )
         );
 
-      const bookedIds = booked.map(b => b.seatId);
+      // Gunakan Set untuk performa pengecekan ID yang lebih cepat
+      const reservedIds = new Set(reservedSeats.map(s => s.seatId));
 
-      // 4. Gabungkan data
+      // 4. Mapping Data Akhir
       return allSeats.map(seat => ({
-        ...seat,
-        isAvailable: !bookedIds.includes(seat.seatId)
+        seat_id: seat.seatId,
+        seat_number: seat.seatNumber,
+        row_name: seat.rowName,
+        position: {
+            x: seat.posX,
+            y: seat.posY
+        },
+        // Kursi tersedia hanya jika ID-nya tidak ada di daftar reservedIds
+        is_available: !reservedIds.has(seat.seatId)
       }));
 
-    } catch (err) {
+    } catch (err: any) {
+      console.error("Error fetching seat status:", err.message);
       set.status = 500;
-      return { error: "Gagal memuat status kursi" };
+      return { error: "Gagal memuat denah kursi" };
     }
+  }, {
+    params: t.Object({
+      schedule_id: t.String()
+    })
   });

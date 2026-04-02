@@ -1,8 +1,14 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, unique } from "drizzle-orm/sqlite-core";
 import { relations, sql } from "drizzle-orm";
 
+// --- HELPERS ---
+const timestamps = {
+  createdAt: text("created_at").default(sql`(datetime('now', 'localtime'))`),
+  updatedAt: text("updated_at").default(sql`(datetime('now', 'localtime'))`),
+};
+
 // ==========================================
-// 1. DEFINISI SEMUA TABEL (Tanpa Relasi Dulu)
+// 1. DEFINISI TABEL
 // ==========================================
 
 export const admins = sqliteTable("admins", {
@@ -11,8 +17,7 @@ export const admins = sqliteTable("admins", {
   email: text("email").unique().notNull(),
   password: text("password").notNull(),
   photoUrl: text("photo_url"),
-  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+  ...timestamps,
 });
 
 export const users = sqliteTable("users", {
@@ -25,8 +30,7 @@ export const users = sqliteTable("users", {
   tanggalLahir: text("tanggal_lahir").notNull(),
   address: text("address"),
   photoUrl: text("photo_url"),
-  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+  ...timestamps,
 });
 
 export const movies = sqliteTable("movies", {
@@ -34,14 +38,13 @@ export const movies = sqliteTable("movies", {
   title: text("title").notNull(),
   slug: text("slug").notNull(),
   synopsis: text("synopsis").notNull(),
-  duration: integer("duration").notNull(),
+  duration: integer("duration").notNull(), // dalam menit
   genre: text("genre").notNull(),
   ratingAge: text("rating_age").notNull(),
   photoUrl: text("photo_url"),
   trailerUrl: text("trailer_url"),
   isPlaying: integer("is_playing", { mode: "boolean" }).default(false).notNull(),
-  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+  ...timestamps,
 });
 
 export const cities = sqliteTable("cities", {
@@ -61,7 +64,7 @@ export const studios = sqliteTable("studios", {
   studioId: integer("studio_id").primaryKey({ autoIncrement: true }),
   cinemaId: integer("cinema_id").notNull().references(() => cinemas.cinemaId, { onDelete: 'cascade' }),
   namaStudio: text("nama_studio").notNull(),
-  type: text("type").notNull(),
+  type: text("type").notNull(), // e.g., VIP, Regular, Dolby Atmos
 });
 
 export const actors = sqliteTable("actors", {
@@ -85,14 +88,16 @@ export const seats = sqliteTable("seats", {
   rowName: text("row_name").notNull(),
   posX: integer("pos_x").notNull(),
   posY: integer("pos_y").notNull(),
-});
+}, (t) => ({
+  unq: unique().on(t.studioId, t.seatNumber, t.rowName),
+}));
 
 export const schedules = sqliteTable("schedules", {
   scheduleId: integer("schedule_id").primaryKey({ autoIncrement: true }),
   movieId: integer("movie_id").notNull().references(() => movies.movieId, { onDelete: 'cascade' }),
   studioId: integer("studio_id").notNull().references(() => studios.studioId, { onDelete: 'cascade' }),
-  showDate: text("show_date").notNull(),
-  showTime: text("show_time").notNull(),
+  showDate: text("show_date").notNull(), // Format YYYY-MM-DD
+  showTime: text("show_time").notNull(), // Format HH:mm
   price: real("price").notNull(),
   availableSeats: integer("available_seats").notNull(),
 });
@@ -104,9 +109,9 @@ export const bookings = sqliteTable("bookings", {
   quantity: integer("quantity").notNull(),
   totalPrice: real("total_price").notNull(),
   statusBooking: text("status_booking", { enum: ["PENDING", "SUCCESS", "CANCELLED"] }).default("PENDING"),
-  isUsed: integer("is_used", { mode: "boolean" }).default(false), // Penting untuk Scan Admin
+  isUsed: integer("is_used", { mode: "boolean" }).default(false),
   paymentLimit: text("payment_limit"),
-  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  createdAt: text("created_at").default(sql`(datetime('now', 'localtime'))`),
 });
 
 export const bookingDetails = sqliteTable("booking_details", {
@@ -119,17 +124,16 @@ export const bookingDetails = sqliteTable("booking_details", {
 export const payments = sqliteTable("payments", {
   paymentId: integer("payment_id").primaryKey({ autoIncrement: true }),
   bookingId: integer("booking_id").notNull().references(() => bookings.bookingId, { onDelete: 'cascade' }),
-  externalId: text("external_id").notNull().default("TEMP_ID"),
-  checkoutUrl: text("checkout_url"), // Ini boleh null, jadi aman
+  externalId: text("external_id").notNull(),
+  checkoutUrl: text("checkout_url"),
   paymentMethod: text("payment_method").notNull(),
   amount: real("amount").notNull(),
   paymentStatus: text("payment_status", { enum: ["PENDING", "PAID", "EXPIRED"] }).default("PENDING"),
-  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+  ...timestamps,
 });
 
 // ==========================================
-// 2. DEFINISI RELASI (Setalah Semua Tabel Ada)
+// 2. DEFINISI RELASI (Drizzle Relations API)
 // ==========================================
 
 export const citiesRelations = relations(cities, ({ many }) => ({
@@ -157,14 +161,8 @@ export const actorsRelations = relations(actors, ({ many }) => ({
 }));
 
 export const movieCastRelations = relations(Cast, ({ one }) => ({
-  movie: one(movies, { 
-    fields: [Cast.movieId], 
-    references: [movies.movieId] 
-  }),
-  actor: one(actors, { 
-    fields: [Cast.actorId], 
-    references: [actors.actorId] 
-  }),
+  movie: one(movies, { fields: [Cast.movieId], references: [movies.movieId] }),
+  actor: one(actors, { fields: [Cast.actorId], references: [actors.actorId] }),
 }));
 
 export const seatsRelations = relations(seats, ({ one, many }) => ({
@@ -182,7 +180,8 @@ export const bookingsRelations = relations(bookings, ({ one, many }) => ({
   user: one(users, { fields: [bookings.userId], references: [users.userId] }),
   schedule: one(schedules, { fields: [bookings.scheduleId], references: [schedules.scheduleId] }),
   details: many(bookingDetails),
-  payment: one(payments, { fields: [bookings.bookingId], references: [payments.bookingId] }),
+  // Menggunakan many karena satu booking bisa memiliki beberapa percobaan payment (jika yang pertama expired)
+  payments: many(payments), 
 }));
 
 export const bookingDetailsRelations = relations(bookingDetails, ({ one }) => ({
