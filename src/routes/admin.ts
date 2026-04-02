@@ -100,28 +100,38 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
   /**
    * 4. SCAN TIKET (Protected & Final Logic)
    */
-  .post("/scan-ticket", async ({ body, set, jwt, headers }) => {
+.post("/scan-ticket", async ({ body, set }) => {
     try {
-      const token = headers.authorization?.startsWith('Bearer ') 
-        ? headers.authorization.slice(7) 
-        : null;
+      const { qr_content, admin_email, admin_password } = body;
 
-      if (!token || !(await jwt.verify(token))) {
+      // 1. VERIFIKASI ADMIN (Langsung via DB & Bun.password)
+      const admin = await db.query.admins.findFirst({
+        where: eq(admins.email, admin_email)
+      });
+
+      // Cek apakah admin ada dan password (Argon2) cocok
+      if (!admin || !(await Bun.password.verify(admin_password, admin.password))) {
         set.status = 401;
-        return { status: "REJECTED", message: "Akses ditolak! Token tidak valid." };
+        return { 
+          status: "REJECTED", 
+          message: "Akses ditolak! Email atau Password Admin salah." 
+        };
       }
 
-      const qrContent = body.qr_content; 
-
+      // 2. CARI DATA PEMBAYARAN BERDASARKAN QR (EXTERNAL ID)
       const paymentRecord = await db.query.payments.findFirst({
-        where: eq(payments.externalId, qrContent),
+        where: eq(payments.externalId, qr_content),
       });
 
       if (!paymentRecord) {
         set.status = 404;
-        return { status: "REJECTED", message: "Tiket/Invoice tidak ditemukan!" };
+        return { 
+          status: "REJECTED", 
+          message: "Tiket tidak valid! Invoice ID tidak ditemukan di sistem." 
+        };
       }
 
+      // 3. AMBIL DETAIL BOOKING LENGKAP
       const ticket = await db.query.bookings.findFirst({
         where: eq(bookings.bookingId, paymentRecord.bookingId),
         with: {
@@ -137,23 +147,29 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
       if (!ticket) {
         set.status = 404;
-        return { status: "REJECTED", message: "Data booking tidak ditemukan!" };
+        return { status: "REJECTED", message: "Data booking hilang dari database." };
       }
 
+      // 4. VALIDASI STATUS PEMBAYARAN & PENGGUNAAN
       if (ticket.statusBooking !== "SUCCESS") {
         set.status = 403;
-        return { status: "REJECTED", message: "Tiket ini belum lunas!" };
+        return { 
+          status: "REJECTED", 
+          message: "Tiket gagal diverifikasi! Pembayaran belum lunas atau dibatalkan." 
+        };
       }
 
       if (ticket.isUsed) {
         set.status = 400;
         return { 
           status: "REJECTED", 
-          message: "Tiket sudah pernah digunakan!",
-          used_at: ticket.updatedAt 
+          message: "Tiket sudah hangus! Sudah pernah di-scan sebelumnya.",
+          scanned_at: ticket.updatedAt 
         };
       }
 
+      // 5. UPDATE TIKET MENJADI 'USED'
+      const now = new Date();
       await db.update(bookings)
         .set({ 
           isUsed: true,
@@ -161,30 +177,33 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
         })
         .where(eq(bookings.bookingId, ticket.bookingId));
 
+      // 6. RESPONSE BERHASIL (APPROVED)
       return {
         status: "APPROVED",
-        message: "Verifikasi Berhasil! Selamat menonton.",
-        data: {
+        message: "Check-in Berhasil! Silakan masuk ke studio.",
+        info: {
           movie: ticket.schedule?.movie?.title,
           cinema: (ticket.schedule?.studio as any)?.cinema?.namaBioskop,
           studio: (ticket.schedule?.studio as any)?.namaStudio,
           seats: ticket.details.map((d: any) => d.seat?.seatNumber).filter(Boolean),
-          booking_id: ticket.bookingId,
-          scanned_at: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
+          scanned_by: admin.fullName,
+          time: now.toLocaleTimeString('id-ID')
         }
       };
 
     } catch (err: any) {
+      console.error("Scan Error:", err.message);
       set.status = 500;
-      return { status: "ERROR", error: "Terjadi gangguan pada server verifikasi" };
+      return { status: "ERROR", message: "Gagal memproses verifikasi.", detail: err.message };
     }
   }, {
     body: t.Object({
-      qr_content: t.String({ description: "Isi dari QR Code (external_id)" })
+      qr_content: t.String({ description: "Isi QR Code (INV-RPLAY-XXX)" }),
+      admin_email: t.String({ format: 'email', description: "Email Admin untuk verifikasi" }),
+      admin_password: t.String({ description: "Password Admin untuk verifikasi" })
     }),
-    detail: { 
-      tags: ['Admin Ticket System'], 
-      summary: 'Verifikasi tiket penonton',
-      security: [{ bearerAuth: [] }] 
+    detail: {
+      tags: ['Admin Ticket System'],
+      summary: 'Verifikasi & Scan Tiket Penonton (Tanpa Bearer Token)'
     }
   });

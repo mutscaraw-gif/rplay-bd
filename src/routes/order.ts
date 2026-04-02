@@ -221,9 +221,6 @@ export const orderRoutes = new Elysia({ prefix: '/order' })
     params: t.Object({ id: t.Numeric() })
   })
 
-  /**
-   * 4. CANCEL BOOKING
-   */
   .patch("/cancel/:id", async ({ params: { id }, set }) => {
     try {
       return await db.transaction(async (tx) => {
@@ -236,22 +233,26 @@ export const orderRoutes = new Elysia({ prefix: '/order' })
         }
 
         await tx.update(bookings)
-          .set({ statusBooking: "CANCELLED" })
+          .set({ 
+            statusBooking: "CANCELLED",
+            // Pastikan menggunakan properti yang ada di schema
+            updatedAt: sql`(datetime('now', 'localtime'))` 
+          })
           .where(eq(bookings.bookingId, id));
         
         await tx.update(schedules)
           .set({ availableSeats: sql`${schedules.availableSeats} + ${order.quantity}` })
           .where(eq(schedules.scheduleId, order.scheduleId));
 
-        return { message: "Booking berhasil dibatalkan." };
+        return { success: true, message: "Booking berhasil dibatalkan." };
       });
     } catch (err: any) {
       if (err.message === "NOT_FOUND_OR_PAID") {
         set.status = 400;
-        return { error: "Pesanan tidak ditemukan atau tidak bisa dibatalkan." };
+        return { success: false, error: "Pesanan tidak ditemukan atau tidak bisa dibatalkan." };
       }
       set.status = 500;
-      return { error: "Gagal membatalkan booking" };
+      return { success: false, error: "Gagal membatalkan booking", detail: err.message };
     }
   }, {
     params: t.Object({ id: t.Numeric() })
