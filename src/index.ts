@@ -16,6 +16,7 @@ import { scheduleRoutes } from "./routes/schedule";
 import { orderRoutes } from "./routes/order";
 import { paymentRoutes } from "./routes/payment";
 import { seatRoutes } from "./routes/seats";
+import { ticketRoutes } from "./routes/tickets";
 
 const app = new Elysia()
   // PERBAIKAN CORS: Tambahkan konfigurasi spesifik
@@ -54,8 +55,9 @@ const app = new Elysia()
       .use(seatRoutes)    // <--- INI YANG KURANG
     .use(orderRoutes)   // <--- Jangan lupa ini juga
     .use(paymentRoutes) // <--- Dan ini
+    .use(ticketRoutes)
   )
-  .listen(process.env.PORT || 3000);
+  .listen(process.env.PORT || 3001);
 
 export type App = typeof app;
 

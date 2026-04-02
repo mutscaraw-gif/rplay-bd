@@ -1,15 +1,23 @@
-import { Elysia, t } from "elysia"; // Tambahkan t untuk validasi param
+import { Elysia, t } from "elysia";
 import { db } from "../db";
 import { bookings } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import * as QRCode from "qrcode";
 
 export const ticketRoutes = new Elysia({ prefix: '/ticket' })
+  /**
+   * GENERATE TICKET & QR CODE
+   * Mengambil data booking yang sudah sukses dan membuat QR Code berdasarkan Invoice ID
+   */
   .get("/generate/:booking_id", async ({ params: { booking_id }, set }) => {
     try {
       const id = parseInt(booking_id);
+
+      if (isNaN(id)) {
+        set.status = 400;
+        return { success: false, error: "ID Booking tidak valid" };
+      }
       
-      // Menggunakan query builder Drizzle
       const result = await db.query.bookings.findFirst({
         where: eq(bookings.bookingId, id),
         with: {
@@ -21,51 +29,78 @@ export const ticketRoutes = new Elysia({ prefix: '/ticket' })
           },
           details: { 
             with: { seat: true } 
+          },
+          // Mengambil data payment terakhir untuk mendapatkan externalId (Invoice ID)
+          payments: {
+            orderBy: (payments, { desc }) => [desc(payments.createdAt)],
+            limit: 1
           }
         }
-      }) as any; // Cast ke any untuk menghindari error nested type inference yang kompleks
+      }) as any;
 
-      // 1. Validasi keberadaan data dan status pembayaran
+      // 1. Validasi Keberadaan Data
       if (!result) {
         set.status = 404;
-        return { error: "Data booking tidak ditemukan" };
+        return { success: false, error: "Data booking tidak ditemukan" };
       }
 
+      // 2. Validasi Status Pembayaran
       if (result.statusBooking !== "SUCCESS") {
         set.status = 403;
-        return { error: "Tiket belum tersedia. Silakan selesaikan pembayaran terlebih dahulu." };
+        return { 
+          success: false, 
+          error: "Tiket belum tersedia", 
+          detail: "Silakan selesaikan pembayaran terlebih dahulu." 
+        };
       }
 
-      // 2. Generate QR Code
-      // Kita tambahkan informasi unik di dalam QR
-      const qrContent = `TIC-${result.bookingId}-${result.userId}`;
-      const qrBase64 = await QRCode.toDataURL(qrContent, {
-        errorCorrectionLevel: 'H',
-        margin: 1,
-        width: 300
+      // 3. Ambil Invoice ID untuk Konten QR
+      // Menggunakan externalId dari tabel payments, jika tidak ada gunakan fallback format
+      const invoiceId = result.payments?.[0]?.externalId || `INV-RPLAY-${result.bookingId}-${Date.now()}`;
+      
+      // 4. Generate QR Code
+      const qrBase64 = await QRCode.toDataURL(invoiceId, {
+        errorCorrectionLevel: 'H', // High error correction agar mudah di-scan di layar HP
+        margin: 2,
+        width: 400,
+        color: {
+          dark: '#000000',
+          light: '#ffffff'
+        }
       });
       
-      // 3. Return data yang rapi
+      // 5. Return Final Data
       return {
         success: true,
+        message: "Tiket berhasil dimuat",
         data: {
           booking_id: result.bookingId,
-          movie: result.schedule?.movie?.title,
-          cinema: result.schedule?.studio?.cinema?.namaBioskop,
-          studio: result.schedule?.studio?.namaStudio,
-          show_date: result.schedule?.showDate,
-          show_time: result.schedule?.showTime,
-          seats: result.details?.map((d: any) => d.seat?.seatNumber) || [],
-          qrCode: qrBase64
+          invoice_id: invoiceId, // Menampilkan INV-RPLAY-14-1775100990012
+          movie: {
+             title: result.schedule?.movie?.title,
+             poster: result.schedule?.movie?.photoUrl,
+          },
+          location: {
+             cinema: result.schedule?.studio?.cinema?.namaBioskop,
+             studio: result.schedule?.studio?.namaStudio,
+          },
+          showtime: {
+             date: result.schedule?.showDate,
+             time: result.schedule?.showTime,
+          },
+          seats: result.details
+            ?.map((d: any) => d.seat?.seatNumber)
+            .filter(Boolean) || [],
+          qr_code: qrBase64
         }
       };
 
-    } catch (err) {
+    } catch (err: any) {
+      console.error("Ticket Error:", err.message);
       set.status = 500;
-      return { error: "Gagal memproses tiket" };
+      return { success: false, error: "Gagal memproses tiket digital" };
     }
   }, {
-    // Tambahkan validasi parameter agar booking_id harus berupa string/numeric
     params: t.Object({
       booking_id: t.String()
     })
