@@ -5,6 +5,9 @@ import { eq, and, inArray, sql } from "drizzle-orm";
 
 export const orderRoutes = new Elysia({ prefix: '/order' })
   
+  /**
+   * 1. GET SEATS STATUS
+   */
   .get("/seats-status/:scheduleId", async ({ params: { scheduleId }, set }) => {
     try {
       const schedule = await db.query.schedules.findFirst({
@@ -20,7 +23,7 @@ export const orderRoutes = new Elysia({ prefix: '/order' })
       const [allSeats, reservedSeats] = await Promise.all([
         db.query.seats.findMany({
           where: eq(seats.studioId, schedule.studioId),
-          columns: { seatId: true, seatNumber: true, rowName: true, posX: true, posY: true }
+          columns: { seatId: true, seatNumber: true, rowName: true }
         }),
         db.select({ seatId: bookingDetails.seatId })
           .from(bookingDetails)
@@ -34,60 +37,70 @@ export const orderRoutes = new Elysia({ prefix: '/order' })
       const reservedIds = new Set(reservedSeats.map(s => s.seatId));
 
       return allSeats.map(seat => ({
-        ...seat,
+        seat_id: seat.seatId,
+        seat_number: seat.seatNumber,
+        row_name: seat.rowName,
         is_reserved: reservedIds.has(seat.seatId)
       }));
     } catch (err: any) {
+      console.error("Seats Status Error:", err);
       set.status = 500;
-      return { error: "Gagal memuat denah kursi" };
+      return { error: "Gagal memuat denah kursi", detail: err.message };
     }
   }, {
     params: t.Object({ scheduleId: t.Numeric() })
   })
 
+  /**
+   * 2. CHECKOUT (VULNERABLE TRANSACTION FIXED)
+   */
   .post("/checkout", async ({ body, set }) => {
     const { user_id, schedule_id, seat_ids } = body;
     const MAX_SEATS = 8; 
 
-    if (seat_ids.length === 0) return (set.status = 400, { error: "Minimal pilih 1 kursi." });
-    if (seat_ids.length > MAX_SEATS) return (set.status = 400, { error: `Maksimal ${MAX_SEATS} kursi.` });
+    // Validasi input awal
+    if (!seat_ids || seat_ids.length === 0) {
+      set.status = 400;
+      return { error: "Minimal pilih 1 kursi." };
+    }
+    if (seat_ids.length > MAX_SEATS) {
+      set.status = 400;
+      return { error: `Maksimal pembelian adalah ${MAX_SEATS} kursi.` };
+    }
 
     try {
-      // 1. Validasi awal User dan Jadwal
+      // Validasi User & Schedule sebelum masuk transaksi
       const [scheduleData, userExists] = await Promise.all([
         db.query.schedules.findFirst({
           where: eq(schedules.scheduleId, schedule_id),
-          columns: { price: true, availableSeats: true, studioId: true }
+          columns: { price: true, availableSeats: true }
         }),
         db.query.users.findFirst({ 
           where: eq(users.userId, user_id),
-          columns: { email: true }
+          columns: { fullName: true }
         })
       ]);
 
-      if (!userExists || !scheduleData) {
+      if (!userExists) {
         set.status = 404;
-        return { error: "User atau Jadwal tidak ditemukan." };
+        return { error: `User dengan ID ${user_id} tidak ditemukan di database.` };
+      }
+      if (!scheduleData) {
+        set.status = 404;
+        return { error: "Jadwal tidak ditemukan." };
       }
 
-      // 2. Validasi apakah kursi yang dipilih memang ada di studio tersebut
-      const validSeats = await db.query.seats.findMany({
-        where: and(
-            eq(seats.studioId, scheduleData.studioId),
-            inArray(seats.seatId, seat_ids)
-        )
-      });
-
-      if (validSeats.length !== seat_ids.length) {
+      const currentAvailable = scheduleData.availableSeats ?? 0;
+      if (seat_ids.length > currentAvailable) {
         set.status = 400;
-        return { error: "Beberapa kursi tidak valid untuk studio ini." };
+        return { error: "Kursi tersedia tidak mencukupi kuota pilihan Anda." };
       }
 
-      const totalHarga = (scheduleData.price || 0) * seat_ids.length;
+      const totalHarga = (Number(scheduleData.price) || 0) * seat_ids.length;
 
-      // 3. Memulai Transaksi
+      // START TRANSACTION
       const result = await db.transaction(async (tx) => {
-        // Double Check Race Condition: Apakah kursi sudah dipesan orang lain?
+        // 1. Cek double-booking (Race Condition Protection)
         const isOccupied = await tx
           .select({ id: bookingDetails.seatId })
           .from(bookingDetails)
@@ -99,11 +112,12 @@ export const orderRoutes = new Elysia({ prefix: '/order' })
           ));
 
         if (isOccupied.length > 0) {
-          tx.rollback();
-          return null;
+          // Jangan gunakan tx.rollback() manual yang melempar exception liar
+          // Gunakan throw untuk memicu rollback yang ditangkap catch utama
+          throw new Error("OCCUPIED");
         }
 
-        // Insert ke tabel Bookings
+        // 2. Insert Booking
         const [newBooking] = await tx.insert(bookings).values({
           userId: user_id,
           scheduleId: schedule_id,
@@ -112,39 +126,46 @@ export const orderRoutes = new Elysia({ prefix: '/order' })
           statusBooking: "PENDING",
         }).returning({ id: bookings.bookingId });
 
-        // Insert ke tabel Booking Details
-        await tx.insert(bookingDetails).values(
-          seat_ids.map(seatId => ({
-            bookingId: newBooking.id,
-            seatId: seatId,
-            statusSeat: "BOOKED" as "BOOKED" // Casting string ke enum type
-          }))
-        );
+        // 3. Insert Details
+        const detailsData = seat_ids.map(seatId => ({
+          bookingId: newBooking.id,
+          seatId: seatId,
+          statusSeat: "BOOKED" as const
+        }));
+        
+        await tx.insert(bookingDetails).values(detailsData);
 
-        // Potong Stok secara Atomic
+        // 4. Update Stok Kursi
         await tx.update(schedules)
-          .set({ availableSeats: sql`available_seats - ${seat_ids.length}` })
+          .set({ availableSeats: sql`${schedules.availableSeats} - ${seat_ids.length}` })
           .where(eq(schedules.scheduleId, schedule_id));
 
         return newBooking.id;
       });
 
-      if (!result) {
-        set.status = 400; 
-        return { error: "Kursi baru saja dipesan orang lain." };
-      }
-
       set.status = 201;
       return { 
         message: "Checkout Berhasil", 
         booking_id: result,
-        total_amount: totalHarga,
-        email_user: userExists.email 
+        quantity: seat_ids.length,
+        total_amount: totalHarga
       };
 
     } catch (err: any) {
+      console.error("--- BACKEND CHECKOUT ERROR ---");
+      console.error("Message:", err.message);
+      
+      if (err.message === "OCCUPIED") {
+        set.status = 400;
+        return { error: "Maaf, satu atau lebih kursi baru saja dipesan orang lain." };
+      }
+
+      // Menangkap error Foreign Key atau Database
       set.status = 500;
-      return { error: "Proses checkout gagal", details: err.message };
+      return { 
+        error: "Proses checkout gagal di server.", 
+        detail: err.message 
+      };
     }
   }, {
     body: t.Object({
@@ -154,12 +175,15 @@ export const orderRoutes = new Elysia({ prefix: '/order' })
     })
   })
 
+  /**
+   * 3. GET ORDER SUMMARY
+   */
   .get("/summary/:id", async ({ params: { id }, set }) => {
     try {
       const result = await db.query.bookings.findFirst({
         where: eq(bookings.bookingId, id),
         with: {
-          user: { columns: { fullName: true, email: true } },
+          user: { columns: { fullName: true } },
           schedule: {
             with: {
               movie: { columns: { title: true, photoUrl: true } },
@@ -177,24 +201,17 @@ export const orderRoutes = new Elysia({ prefix: '/order' })
 
       return {
         order_id: result.bookingId,
-        customer: { name: result.user?.fullName, email: result.user?.email },
-        movie: {
-            title: result.schedule?.movie?.title,
-            poster: result.schedule?.movie?.photoUrl,
-            play_at: `${result.schedule?.showDate} ${result.schedule?.showTime}`
-        },
-        location: {
-            cinema: result.schedule?.studio?.cinema?.namaBioskop,
-            studio: result.schedule?.studio?.namaStudio,
-            city: result.schedule?.studio?.cinema?.city?.cityName
-        },
-        booking_info: {
-            seats: result.details?.map(d => d.seat?.seatNumber).filter(Boolean),
-            quantity: result.quantity,
-            total_price: result.totalPrice,
-            status: result.statusBooking,
-            created_at: result.createdAt
-        }
+        customer: result.user?.fullName,
+        movie_title: result.schedule?.movie?.title,
+        poster: result.schedule?.movie?.photoUrl,
+        location: `${result.schedule?.studio?.cinema?.namaBioskop} - ${result.schedule?.studio?.namaStudio}`,
+        city: result.schedule?.studio?.cinema?.city?.cityName,
+        play_at: `${result.schedule?.showDate} ${result.schedule?.showTime}`,
+        seats: result.details?.map(d => d.seat?.seatNumber).filter(Boolean),
+        quantity: result.quantity,
+        total_price: result.totalPrice,
+        status: result.statusBooking,
+        created_at: result.createdAt
       };
     } catch (err: any) {
       set.status = 500;
@@ -204,6 +221,9 @@ export const orderRoutes = new Elysia({ prefix: '/order' })
     params: t.Object({ id: t.Numeric() })
   })
 
+  /**
+   * 4. CANCEL BOOKING
+   */
   .patch("/cancel/:id", async ({ params: { id }, set }) => {
     try {
       return await db.transaction(async (tx) => {
@@ -211,14 +231,8 @@ export const orderRoutes = new Elysia({ prefix: '/order' })
           where: eq(bookings.bookingId, id)
         });
 
-        if (!order) {
-            set.status = 404;
-            return { error: "Order tidak ditemukan" };
-        }
-        
-        if (order.statusBooking !== "PENDING") {
-            set.status = 400;
-            return { error: "Hanya pesanan PENDING yang bisa dibatalkan." };
+        if (!order || order.statusBooking !== "PENDING") {
+          throw new Error("NOT_FOUND_OR_PAID");
         }
 
         await tx.update(bookings)
@@ -226,12 +240,16 @@ export const orderRoutes = new Elysia({ prefix: '/order' })
           .where(eq(bookings.bookingId, id));
         
         await tx.update(schedules)
-          .set({ availableSeats: sql`available_seats + ${order.quantity}` })
+          .set({ availableSeats: sql`${schedules.availableSeats} + ${order.quantity}` })
           .where(eq(schedules.scheduleId, order.scheduleId));
 
-        return { message: "Booking dibatalkan, stok kursi telah pulih." };
+        return { message: "Booking berhasil dibatalkan." };
       });
     } catch (err: any) {
+      if (err.message === "NOT_FOUND_OR_PAID") {
+        set.status = 400;
+        return { error: "Pesanan tidak ditemukan atau tidak bisa dibatalkan." };
+      }
       set.status = 500;
       return { error: "Gagal membatalkan booking" };
     }
