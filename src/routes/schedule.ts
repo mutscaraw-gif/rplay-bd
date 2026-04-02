@@ -52,9 +52,53 @@ export const scheduleRoutes = new Elysia({ prefix: '/schedules' })
   })
 
   /**
-   * 2. TAMBAH JADWAL MASSAL (Optimized)
-   * Menggunakan Batch Check untuk menghindari N+1 Query
+   * 2. GET BY ID
+   * Digunakan oleh frontend untuk detail jadwal (Kursi, Harga, dll)
    */
+  .get("/:id", async ({ params: { id }, set }) => {
+    try {
+      const schedule = await db.query.schedules.findFirst({
+        where: eq(schedules.scheduleId, id),
+        with: {
+          movie: true,
+          studio: {
+            with: { cinema: { with: { city: true } } }
+          }
+        }
+      });
+
+      if (!schedule) {
+        set.status = 404;
+        return { error: "Jadwal tidak ditemukan di database." };
+      }
+
+      // Format data agar sesuai dengan kebutuhan frontend
+      return {
+        schedule_id: schedule.scheduleId,
+        movie: schedule.movie,
+        location: {
+          cinema: schedule.studio?.cinema?.namaBioskop,
+          studio: schedule.studio?.namaStudio,
+          city: schedule.studio?.cinema?.city?.cityName,
+        },
+        play_at: { 
+          date: schedule.showDate, 
+          time: schedule.showTime 
+        },
+        price: schedule.price,
+        available_seats: schedule.availableSeats
+      };
+    } catch (error: any) {
+      set.status = 500;
+      return { error: "Terjadi kesalahan server saat mengambil jadwal." };
+    }
+  }, {
+    params: t.Object({
+      id: t.Numeric()
+    })
+  })
+
+
   .post("/", async ({ body, set }) => {
     const { movie_id, studio_id, show_dates, show_times, price } = body;
 
@@ -185,9 +229,7 @@ export const scheduleRoutes = new Elysia({ prefix: '/schedules' })
       price: t.Number(),
     })
   })
-  // DELETE & DETAIL TETAP SAMA...
 
-// Fungsi Helper untuk hitung durasi (bisa ditaruh di file utils)
 function addMinutes(time: string, mins: number) {
   const [h, m] = time.split(':').map(Number);
   const date = new Date();
