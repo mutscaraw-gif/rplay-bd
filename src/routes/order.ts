@@ -5,10 +5,6 @@ import { eq, and, inArray, sql } from "drizzle-orm";
 
 export const orderRoutes = new Elysia({ prefix: '/order' })
   
-  /**
-   * 1. GET SEAT STATUS
-   * Mengambil denah kursi dan status ketersediaannya (O(1) lookup).
-   */
   .get("/seats-status/:scheduleId", async ({ params: { scheduleId }, set }) => {
     try {
       const schedule = await db.query.schedules.findFirst({
