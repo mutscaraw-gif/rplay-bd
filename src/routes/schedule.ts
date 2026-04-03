@@ -230,6 +230,35 @@ export const scheduleRoutes = new Elysia({ prefix: '/schedules' })
     })
   })
 
+  /**
+   * 4. DELETE JADWAL
+   */
+  .delete("/:id", async ({ params: { id }, set }) => {
+    try {
+      // 1. Cek apakah jadwal ada
+      const existing = await db.query.schedules.findFirst({
+        where: eq(schedules.scheduleId, id),
+      });
+
+      if (!existing) {
+        set.status = 404;
+        return { error: "Jadwal tidak ditemukan." };
+      }
+
+      // 2. Eksekusi hapus
+      await db.delete(schedules).where(eq(schedules.scheduleId, id));
+
+      return { message: "Jadwal berhasil dihapus" };
+    } catch (error: any) {
+      set.status = 500;
+      return { error: "Gagal menghapus jadwal dari database" };
+    }
+  }, {
+    params: t.Object({
+      id: t.Numeric()
+    })
+  })
+
 function addMinutes(time: string, mins: number) {
   const [h, m] = time.split(':').map(Number);
   const date = new Date();
