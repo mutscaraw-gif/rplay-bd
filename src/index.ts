@@ -80,7 +80,7 @@ const app = new Elysia()
   )
 
   // 5. JALANKAN SERVER
-  .listen(process.env.PORT || 3001);
+  .listen(process.env.PORT || 8080);
 
 export type App = typeof app;
 
