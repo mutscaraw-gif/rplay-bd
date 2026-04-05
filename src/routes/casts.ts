@@ -1,13 +1,13 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
-import { Cast } from "../db/schema"; 
+import { cast } from "../db/schema"; 
 import { eq } from "drizzle-orm";
 
 export const castsRoutes = new Elysia({ prefix: '/casts' })
   // --- CREATE ---
   .post("/", async ({ body, set }) => {
     try {
-      const [newCast] = await db.insert(Cast).values({
+      const [newCast] = await db.insert(cast).values({
         movieId: body.movie_id,
         actorId: body.actor_id,
         characterName: body.character_name,
@@ -32,7 +32,7 @@ export const castsRoutes = new Elysia({ prefix: '/casts' })
   // --- GET SINGLE CAST BY ID (Baru) ---
   .get("/", async () => {
   // Mengambil semua data dari tabel Cast
-  return await db.query.Cast.findMany({
+  return await db.query.cast.findMany({
     with: {
       actor: true 
     }
@@ -41,8 +41,8 @@ export const castsRoutes = new Elysia({ prefix: '/casts' })
 
   // --- GET ALL CASTS FOR A MOVIE ---
   .get("/movie/:movieId", async ({ params: { movieId } }) => {
-    return await db.query.Cast.findMany({
-      where: eq(Cast.movieId, movieId),
+    return await db.query.cast.findMany({
+      where: eq(cast.movieId, movieId),
       with: {
         actor: true 
       }
@@ -52,14 +52,14 @@ export const castsRoutes = new Elysia({ prefix: '/casts' })
   // --- UPDATE (PUT) (Baru) ---
   .put("/:id", async ({ params: { id }, body, set }) => {
     try {
-      const [updatedCast] = await db.update(Cast)
+      const [updatedCast] = await db.update(cast)
         .set({
           movieId: body.movie_id,
           actorId: body.actor_id,
           characterName: body.character_name,
           photoUrl: body.photo_url
         })
-        .where(eq(Cast.castId, id))
+        .where(eq(cast.castId, id))
         .returning();
 
       if (!updatedCast) {
@@ -84,6 +84,6 @@ export const castsRoutes = new Elysia({ prefix: '/casts' })
 
   // --- DELETE ---
   .delete("/:id", async ({ params: { id } }) => {
-    await db.delete(Cast).where(eq(Cast.castId, id));
+    await db.delete(cast).where(eq(cast.castId, id));
     return { message: "Pemeran dihapus dari film" };
   }, { params: t.Object({ id: t.Numeric() }) });
