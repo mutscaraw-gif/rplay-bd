@@ -113,46 +113,7 @@ export const studiosRoutes = new Elysia({ prefix: '/studios' })
   })
 
   /**
-   * 6. SEATS GENERATOR
-   */
-  // .post("/seats/generate", async ({ body, set }) => {
-  //   try {
-  //     const { studio_id, row_count, seats_per_row } = body;
-  //     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-  //     const insertData = [];
-
-  //     for (let i = 0; i < row_count; i++) {
-  //       const rowName = alphabet[i];
-  //       for (let j = 1; j <= seats_per_row; j++) {
-  //         insertData.push({
-  //           studioId: studio_id,
-  //           rowName: rowName,
-  //           seatNumber: `${rowName}${j}`,
-  //           posX: j,
-  //           posY: i + 1,
-  //         });
-  //       }
-  //     }
-
-  //     const result = await db.insert(seats).values(insertData).returning();
-  //     return { 
-  //       success: true, 
-  //       message: `Berhasil membuat ${result.length} kursi untuk Studio ID ${studio_id}.` 
-  //     };
-  //   } catch (error: any) {
-  //     set.status = 500;
-  //     return { error: "Gagal generate kursi.", details: error.message };
-  //   }
-  // }, {
-  //   body: t.Object({
-  //     studio_id: t.Number(),
-  //     row_count: t.Number({ minimum: 1, maximum: 26 }),
-  //     seats_per_row: t.Number({ minimum: 1 })
-  //   })
-  // })
-
-  /**
-   * 7. SEATS STATUS
+   * 6. SEATS STATUS
    */
   .get("/seats/status/:schedule_id", async ({ params: { schedule_id }, set }) => {
     try {
@@ -212,16 +173,14 @@ export const studiosRoutes = new Elysia({ prefix: '/studios' })
     params: t.Object({ schedule_id: t.Numeric() })
   })
   /**
-   * 8. GET SEATS BY STUDIO ID (UNTUK ADMIN MANAGEMENT)
+   * 7. GET SEATS BY STUDIO ID
    */
   .get("/:id/seats", async ({ params: { id }, set }) => {
     try {
-      const studioSeats = await db.query.seats.findMany({
+      return await db.query.seats.findMany({
         where: eq(seats.studioId, Number(id)),
         orderBy: [sql`${seats.rowName} ASC`, sql`${seats.posX} ASC`]
       });
-
-      return studioSeats;
     } catch (error: any) {
       set.status = 500;
       return { error: "Gagal mengambil data kursi", details: error.message };
@@ -231,46 +190,57 @@ export const studiosRoutes = new Elysia({ prefix: '/studios' })
   })
 
   /**
-   * 9. UPDATE GENERATOR (DENGAN DELETE TERLEBIH DAHULU)
-   * Agar saat admin klik 'Update', data lama dihapus dulu baru buat baru
+   * 8. UPDATE/GENERATE SEATS
    */
   .post("/seats/generate", async ({ body, set }) => {
     try {
-      const { studio_id, row_count, seats_per_row } = body;
+      const { studio_id, row_count, seats_per_row, inactive_seats } = body;
       
-      // 1. Hapus kursi lama agar tidak duplikat/error constraint
-      await db.delete(seats).where(eq(seats.studioId, studio_id));
+      // Gunakan transaksi agar jika gagal generate, data lama tidak hilang permanen
+      return await db.transaction(async (tx) => {
+        // Hapus data lama
+        await tx.delete(seats).where(eq(seats.studioId, studio_id));
 
-      const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-      const insertData = [];
+        const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+        const insertData = [];
 
-      for (let i = 0; i < row_count; i++) {
-        const rowName = alphabet[i];
-        for (let j = 1; j <= seats_per_row; j++) {
-          insertData.push({
-            studioId: studio_id,
-            rowName: rowName,
-            seatNumber: `${j}`, // Simpan nomor saja agar bersih di UI
-            posX: j,
-            posY: i + 1,
-          });
+        for (let i = 0; i < row_count; i++) {
+          const rowName = alphabet[i];
+          for (let j = 1; j <= seats_per_row; j++) {
+            const seatKey = `${rowName}${j}`;
+            
+            // Hanya masukkan kursi yang BUKAN merupakan lorong (inactive)
+            if (!inactive_seats.includes(seatKey)) {
+              insertData.push({
+                studioId: studio_id,
+                rowName: rowName,
+                seatNumber: `${j}`,
+                posX: j,
+                posY: i + 1,
+              });
+            }
+          }
         }
-      }
 
-      const result = await db.insert(seats).values(insertData).returning();
-      
-      return { 
-        success: true, 
-        message: `Berhasil memperbarui ${result.length} kursi untuk Studio ID ${studio_id}.` 
-      };
+        if (insertData.length > 0) {
+          await tx.insert(seats).values(insertData);
+        }
+
+        return { 
+          success: true, 
+          message: `Layout diperbarui. ${insertData.length} kursi aktif dibuat.` 
+        };
+      });
+
     } catch (error: any) {
       set.status = 500;
-      return { error: "Gagal generate kursi.", details: error.message };
+      return { error: "Gagal memperbarui layout.", details: error.message };
     }
   }, {
     body: t.Object({
       studio_id: t.Number(),
       row_count: t.Number({ minimum: 1, maximum: 26 }),
-      seats_per_row: t.Number({ minimum: 1 })
+      seats_per_row: t.Number({ minimum: 1 }),
+      inactive_seats: t.Array(t.String()) // Terima data kursi yang di-klik Admin sebagai lorong
     })
-  });
+  })

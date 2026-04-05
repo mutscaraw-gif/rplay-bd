@@ -76,7 +76,7 @@ export const actors = sqliteTable("actors", {
   photoUrl: text("photo_url"),
 });
 
-export const Cast = sqliteTable("cast", {
+export const cast = sqliteTable("cast", {
   castId: integer("cast_id").primaryKey({ autoIncrement: true }),
   movieId: integer("movie_id").notNull().references(() => movies.movieId, { onDelete: 'cascade' }),
   actorId: integer("actor_id").notNull().references(() => actors.actorId, { onDelete: 'cascade' }),
@@ -87,13 +87,17 @@ export const Cast = sqliteTable("cast", {
 export const seats = sqliteTable("seats", {
   seatId: integer("seat_id").primaryKey({ autoIncrement: true }),
   studioId: integer("studio_id").notNull().references(() => studios.studioId, { onDelete: 'cascade' }),
-  seatNumber: text("seat_number").notNull(),
-  rowName: text("row_name").notNull(),
+  seatNumber: text("seat_number").notNull(), // Isinya: "1", "2", "3"
+  rowName: text("row_name").notNull(),       // Isinya: "A", "B", "C"
   posX: integer("pos_x").notNull(),
   posY: integer("pos_y").notNull(),
 }, (table) => ({
-  // Unik per studio agar tidak ada nomor kursi ganda
-  studioSeatUnique: uniqueIndex("studio_seat_unique").on(table.studioId, table.seatNumber),
+  // PERBAIKAN: Unik berdasarkan Studio + Baris + Nomor Kursi
+  studioSeatUnique: uniqueIndex("studio_seat_unique").on(
+    table.studioId, 
+    table.rowName, 
+    table.seatNumber
+  ),
 }));
 
 export const schedules = sqliteTable("schedules", {
@@ -155,17 +159,17 @@ export const studiosRelations = relations(studios, ({ one, many }) => ({
 }));
 
 export const moviesRelations = relations(movies, ({ many }) => ({
-  casts: many(Cast),
+  casts: many(cast),
   schedules: many(schedules),
 }));
 
-export const movieCastRelations = relations(Cast, ({ one }) => ({
-  movie: one(movies, { fields: [Cast.movieId], references: [movies.movieId] }),
-  actor: one(actors, { fields: [Cast.actorId], references: [actors.actorId] }),
+export const movieCastRelations = relations(cast, ({ one }) => ({
+  movie: one(movies, { fields: [cast.movieId], references: [movies.movieId] }),
+  actor: one(actors, { fields: [cast.actorId], references: [actors.actorId] }),
 }));
 
 export const actorsRelations = relations(actors, ({ many }) => ({
-  casts: many(Cast),
+  casts: many(cast),
 }));
 
 export const seatsRelations = relations(seats, ({ one, many }) => ({
