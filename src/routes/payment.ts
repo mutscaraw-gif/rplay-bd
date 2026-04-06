@@ -296,8 +296,10 @@ export const paymentRoutes = new Elysia({ prefix: "/payment" })
           },
         },
       });
+      console.log("ID yang dicari:", uId); // CEK INI
+      console.log("Jumlah data mentah dari DB:", results.length);
 
-      const adminFee = 2000;
+      // const adminFee = 2000;
 
       const mappedData = results.map((result) => ({
         order_id: result.bookingId,
