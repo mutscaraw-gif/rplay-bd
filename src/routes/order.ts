@@ -1,7 +1,7 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
-import { bookings, bookingDetails, schedules, users, seats } from "../db/schema";
-import { eq, and, inArray, sql, ne } from "drizzle-orm";
+import { bookings, bookingDetails, schedules, users, seats, payments } from "../db/schema";
+import { eq, and, inArray, sql, ne, desc } from "drizzle-orm";
 
 export const orderRoutes = new Elysia({ prefix: '/order' })
   
@@ -157,4 +157,40 @@ export const orderRoutes = new Elysia({ prefix: '/order' })
       schedule_id: t.Number(),
       seat_ids: t.Array(t.Number())
     })
+  })
+
+  /**
+   * 3. GET ALL BOOKINGS (UNTUK ADMIN DASHBOARD)
+   * Hanya menambahkan bagian ini sesuai permintaan.
+   */
+  .get("/all-bookings", async ({ set }) => {
+    try {
+      const data = await db.query.bookings.findMany({
+        with: {
+          user: { columns: { fullName: true } },
+          schedule: {
+            with: { movie: { columns: { title: true } } }
+          },
+          payments: {
+            columns: { paymentMethod: true },
+            orderBy: [desc(payments.createdAt)],
+            limit: 1
+          }
+        },
+        orderBy: [desc(bookings.createdAt)]
+      });
+
+      return data.map(b => ({
+        booking_id: `BK-${b.bookingId}`,
+        user_name: b.user?.fullName || "Guest",
+        movie_title: b.schedule?.movie?.title || "Unknown Movie",
+        total_price: b.totalPrice,
+        status: b.statusBooking,
+        payment_method: b.payments[0]?.paymentMethod || "NONE",
+        created_at: b.createdAt
+      }));
+    } catch (err: any) {
+      set.status = 500;
+      return { error: "Gagal mengambil data booking", detail: err.message };
+    }
   });
