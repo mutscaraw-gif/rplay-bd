@@ -64,6 +64,7 @@ const app = new Elysia()
   // 4. PENGELOMPOKAN RUTE API
   .group("/api", (app) => 
     app
+       .use(orderRoutes)
       .use(adminRoutes)
       .use(userRoutes)
       .use(movieRoutes)
@@ -74,7 +75,6 @@ const app = new Elysia()
       .use(studiosRoutes)
       .use(scheduleRoutes)
       .use(seatRoutes)
-      .use(orderRoutes)
       .use(paymentRoutes)
       .use(ticketRoutes)
   )
