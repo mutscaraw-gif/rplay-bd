@@ -26,7 +26,7 @@ export const paymentRoutes = new Elysia({ prefix: '/payment' })
           payerEmail: body.email,
           description: `Tiket Cinema RPlay - Booking #${body.bookingId}`,
           // Diarahkan langsung ke halaman tiket setelah sukses
-          successRedirectUrl: `${frontendUrl}/ticket/${body.bookingId}`,
+          successRedirectUrl: `${frontendUrl}/ticket/[id]/${body.bookingId}`,
           failureRedirectUrl: `${frontendUrl}/order/summary/${body.bookingId}`,
           invoiceDuration: 900, 
         }
