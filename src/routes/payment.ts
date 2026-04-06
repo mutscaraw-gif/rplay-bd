@@ -312,7 +312,7 @@ export const paymentRoutes = new Elysia({ prefix: "/payment" })
         seats: result.details
           ?.map((d) => `${d.seat?.rowName}${d.seat?.seatNumber}`)
           .filter(Boolean),
-        total_price: result.totalPrice + adminFee,
+        total_price: result.totalPrice,
         payment_status: result.payments[0]?.paymentStatus || "NOT_CREATED",
         checkout_url: result.payments[0]?.checkoutUrl,
         // Tambahkan data tambahan untuk TicketModal jika diperlukan
