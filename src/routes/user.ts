@@ -1,9 +1,19 @@
 import { Elysia, t } from "elysia";
+import { jwt } from '@elysiajs/jwt'; // Import plugin JWT
 import { db } from "../db";
 import { users } from "../db/schema";
 import { eq, or, sql } from "drizzle-orm";
 
 export const userRoutes = new Elysia({ prefix: '/akun' })
+    // Konfigurasi JWT
+    .use(
+        jwt({
+            name: 'jwt',
+            secret: 'RAHASIA_SANGAT_AMAN_123', // Ganti dengan secret key yang kuat
+            exp: '7d' // Token berlaku selama 7 hari
+        })
+    )
+    
     // --- REGISTER ---
     .post("/register", async ({ body, set }) => {
         try {
@@ -37,21 +47,37 @@ export const userRoutes = new Elysia({ prefix: '/akun' })
         })
     })
 
-    // --- LOGIN ---
-    .post("/login", async ({ body, set }) => {
+    // --- LOGIN (Sudah diperbaiki dengan JWT) ---
+    .post("/login", async ({ body, set, jwt }) => {
         const { identifier, password } = body;
         
         const user = await db.select().from(users)
             .where(or(eq(users.email, identifier), eq(users.phoneNumber, identifier)))
             .get();
 
+        // Validasi User dan Password
         if (!user || !(await Bun.password.verify(password, user.password))) {
             set.status = 401;
             return { success: false, error: "Kredensial salah!" };
         }
 
+        // Buat Token JWT
+        const token = await jwt.sign({
+            userId: user.userId,
+            email: user.email
+        });
+
         const { password: _, ...safeUser } = user;
-        return { success: true, message: "Login Berhasil!", user: safeUser };
+
+        // Kirimkan token di dalam objek user agar tersimpan di localStorage frontend
+        return { 
+            success: true, 
+            message: "Login Berhasil!", 
+            user: { 
+                ...safeUser, 
+                token: token // Token disisipkan di sini
+            } 
+        };
     }, {
         body: t.Object({ 
             identifier: t.String(),
@@ -97,7 +123,6 @@ export const userRoutes = new Elysia({ prefix: '/akun' })
     .patch("/update/:id", async ({ params: { id }, body, set }) => {
         try {
             const { password, ...rest } = body;
-            // Gunakan format SQLite localtime untuk updatedAt
             const dataUpdate: any = { 
                 ...rest, 
                 updatedAt: sql`(datetime('now', 'localtime'))` 
