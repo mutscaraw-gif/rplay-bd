@@ -91,7 +91,7 @@ export const seats = sqliteTable("seats", {
   rowName: text("row_name").notNull(),       // Isinya: "A", "B", "C"
   posX: integer("pos_x").notNull(),
   posY: integer("pos_y").notNull(),
-  status: text("status").default("ACTIVE"),
+  
 }, (table) => ({
   // PERBAIKAN: Unik berdasarkan Studio + Baris + Nomor Kursi
   studioSeatUnique: uniqueIndex("studio_seat_unique").on(

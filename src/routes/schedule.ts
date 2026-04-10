@@ -5,9 +5,6 @@ import { eq, sql, and, ne, desc } from "drizzle-orm";
 
 export const scheduleRoutes = new Elysia({ prefix: '/schedules' })
 
-  /**
-   * 1. GET ALL & FILTER (Urutan: Terbaru di atas)
-   */
   .get("/", async ({ query, set }) => {
     const { movie_id, city_id } = query;
     try {
@@ -19,7 +16,7 @@ export const scheduleRoutes = new Elysia({ prefix: '/schedules' })
             with: { cinema: { with: { city: true } } }
           }
         },
-        orderBy: [desc(schedules.scheduleId)] // ID terbesar (terbaru) muncul pertama
+        orderBy: [desc(schedules.scheduleId)]
       });
 
       let filtered = allSchedules;
@@ -51,7 +48,7 @@ export const scheduleRoutes = new Elysia({ prefix: '/schedules' })
   })
 
   /**
-   * 2. POST JADWAL (Batch Insert dengan Validasi Kapasitas Aktif)
+   * POST JADWAL
    */
   .post("/", async ({ body, set }) => {
     const { movie_id, studio_id, show_dates, show_times, price } = body;
@@ -63,18 +60,13 @@ export const scheduleRoutes = new Elysia({ prefix: '/schedules' })
         return { error: "Film tidak ditemukan." };
       }
 
-      // CRITICAL: Hitung hanya kursi yang statusnya 'ACTIVE' di studio tersebut
+      // HITUNG KAPASITAS: Hitung total baris di tabel seats untuk studio ini
       const [seatCount] = await db
         .select({ count: sql`count(*)` })
         .from(seats)
-        .where(
-          and(
-            eq(seats.studioId, studio_id),
-            eq(seats.status, 'ACTIVE') 
-          )
-        );
+        .where(eq(seats.studioId, studio_id));
 
-      const totalActiveSeats = Number(seatCount?.count) || 0;
+      const totalSeats = Number(seatCount?.count) || 0;
       const duration = movieData.duration;
 
       const insertData: any[] = [];
@@ -88,7 +80,7 @@ export const scheduleRoutes = new Elysia({ prefix: '/schedules' })
         for (const time of show_times) {
           const isOverlap = existingSchedules.some(s => {
             const startNew = time;
-            const endNew = addMinutes(time, duration + 20); // Tambah 20 menit jeda antar film
+            const endNew = addMinutes(time, duration + 20);
             const startOld = s.showTime;
             const endOld = addMinutes(s.showTime, duration + 20);
             return (startNew < endOld && endNew > startOld);
@@ -105,7 +97,7 @@ export const scheduleRoutes = new Elysia({ prefix: '/schedules' })
             showDate: date,
             showTime: time,
             price: price,
-            availableSeats: totalActiveSeats // Mengisi kapasitas berdasarkan kursi aktif
+            availableSeats: totalSeats // Mengisi kapasitas berdasarkan jumlah kursi di DB
           });
         }
       }
@@ -133,7 +125,7 @@ export const scheduleRoutes = new Elysia({ prefix: '/schedules' })
   })
 
   /**
-   * 3. UPDATE JADWAL
+   * UPDATE JADWAL
    */
   .put("/:id", async ({ params: { id }, body, set }) => {
     try {
@@ -148,7 +140,7 @@ export const scheduleRoutes = new Elysia({ prefix: '/schedules' })
       const movieData = await db.query.movies.findFirst({ where: eq(movies.movieId, movie_id) });
       const duration = movieData?.duration || 120;
 
-      // Cek bentrok waktu
+      // Cek bentrok
       const conflict = await db.query.schedules.findFirst({
         where: and(
           eq(schedules.studioId, studio_id),
@@ -164,13 +156,13 @@ export const scheduleRoutes = new Elysia({ prefix: '/schedules' })
         return { error: "Waktu bentrok dengan jadwal lain." };
       }
 
-      // Jika studio berubah, hitung ulang kapasitas kursi aktif
       let updatedSeats = current.availableSeats;
+      // Jika studio ganti, hitung ulang kapasitas total kursi
       if (studio_id !== current.studioId) {
         const [seatCount] = await db
           .select({ count: sql`count(*)` })
           .from(seats)
-          .where(and(eq(seats.studioId, studio_id), eq(seats.status, 'ACTIVE')));
+          .where(eq(seats.studioId, studio_id));
         updatedSeats = Number(seatCount?.count) || 0;
       }
 
@@ -202,9 +194,6 @@ export const scheduleRoutes = new Elysia({ prefix: '/schedules' })
     })
   })
 
-  /**
-   * 4. DELETE JADWAL
-   */
   .delete("/:id", async ({ params: { id }, set }) => {
     try {
       const existing = await db.query.schedules.findFirst({ where: eq(schedules.scheduleId, id) });
@@ -222,9 +211,6 @@ export const scheduleRoutes = new Elysia({ prefix: '/schedules' })
     params: t.Object({ id: t.Numeric() })
   });
 
-/**
- * Helper: Menambahkan menit ke string waktu "HH:mm"
- */
 function addMinutes(time: string, mins: number) {
   const [h, m] = time.split(':').map(Number);
   const date = new Date();
