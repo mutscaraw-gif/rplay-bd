@@ -99,8 +99,8 @@ console.log(`
   🚀 RPlay API is running!
   
   Local   : http://192.168.0.46:${app.server?.port}
-  Tunnel  : https://wbvjvc-ip-182-8-193-165.tunnelmole.net
-  Docs    : https://wbvjvc-ip-182-8-193-165.tunnelmole.net/docs
+  Tunnel  : https://tlimpe-ip-182-8-193-165.tunnelmole.net
+  Docs    : https://tlimpe-ip-182-8-193-165.tunnelmole.net/docs
 
   CORS izinkan: ${allowedOrigins.join(", ")}
 `);

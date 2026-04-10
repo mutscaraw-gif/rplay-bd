@@ -18,7 +18,7 @@ export const paymentRoutes = new Elysia({ prefix: "/payment" })
     async ({ body, set }) => {
       try {
         const externalId = `INV-RPLAY-${body.bookingId}-${Date.now()}`;
-        const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+        const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
 
         const xenditInvoice = await xenditClient.Invoice.createInvoice({
           data: {
