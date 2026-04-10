@@ -1,22 +1,21 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
 import { seats, bookingDetails, bookings, schedules } from "../db/schema";
-import { eq, and, ne } from "drizzle-orm";
+import { eq, and, ne, asc } from "drizzle-orm";
 
 export const seatRoutes = new Elysia({ prefix: '/seats' })
   
   /**
    * GET STATUS KURSI
-   * Mengambil semua denah kursi di studio terkait dan mengecek mana yang sudah terisi.
+   * Digunakan untuk denah pemilihan kursi oleh user.
    */
   .get("/status/:schedule_id", async ({ params: { schedule_id }, set }) => {
     try {
       const sId = parseInt(schedule_id);
 
-      // 1. Validasi Jadwal & Dapatkan Studio ID
+      // 1. Ambil info jadwal dan pastikan jadwal ada
       const schedule = await db.query.schedules.findFirst({
         where: eq(schedules.scheduleId, sId),
-        columns: { studioId: true }
       });
 
       if (!schedule) {
@@ -24,15 +23,17 @@ export const seatRoutes = new Elysia({ prefix: '/seats' })
         return { error: "Jadwal tidak ditemukan" };
       }
 
-      // 2. Ambil Semua Kursi yang ada di Studio tersebut
-      const allSeats = await db.query.seats.findMany({
-        where: eq(seats.studioId, schedule.studioId),
-        orderBy: [seats.rowName, seats.seatNumber] // Urutkan agar rapi di frontend
+      // 2. Ambil SEMUA kursi yang statusnya 'ACTIVE' di studio tersebut
+      // Kursi 'INACTIVE' (yang di-disable di Admin) tidak akan dikirim ke user
+      const studioSeats = await db.query.seats.findMany({
+        where: and(
+          eq(seats.studioId, schedule.studioId),
+          eq(seats.status, "ACTIVE") // Filter krusial agar kursi disable tidak muncul
+        ),
+        orderBy: [asc(seats.rowName), asc(seats.seatNumber)]
       });
 
-      // 3. Ambil Kursi yang SUDAH TERISI (Booked)
-      // Logika: Kursi dianggap terisi jika statusnya BUKAN 'CANCELLED'
-      // Ini mencakup status 'SUCCESS' dan 'PENDING'
+      // 3. Ambil data booking yang sudah ada untuk jadwal ini
       const reservedSeats = await db
         .select({ seatId: bookingDetails.seatId })
         .from(bookingDetails)
@@ -44,19 +45,15 @@ export const seatRoutes = new Elysia({ prefix: '/seats' })
           )
         );
 
-      // Gunakan Set untuk performa pengecekan ID yang lebih cepat
       const reservedIds = new Set(reservedSeats.map(s => s.seatId));
 
-      // 4. Mapping Data Akhir
-      return allSeats.map(seat => ({
+      // 4. Map data untuk frontend
+      return studioSeats.map(seat => ({
         seat_id: seat.seatId,
-        seat_number: seat.seatNumber,
+        seat_name: `${seat.rowName}${seat.seatNumber}`,
         row_name: seat.rowName,
-        position: {
-            x: seat.posX,
-            y: seat.posY
-        },
-        // Kursi tersedia hanya jika ID-nya tidak ada di daftar reservedIds
+        seat_number: seat.seatNumber,
+        // Kursi bisa dipilih jika ID-nya tidak ada di daftar booking (reserved)
         is_available: !reservedIds.has(seat.seatId)
       }));
 
